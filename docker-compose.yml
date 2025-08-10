@@ -10,6 +10,7 @@ services:
     volumes:
       - ./ch_data:/var/lib/clickhouse
       - ./ch_logs:/var/log/clickhouse-server
+    restart: always
     ports: ["8123:8123","9000:9000"]
     environment:
       - CLICKHOUSE_DB=${CLICKHOUSE_DB}
