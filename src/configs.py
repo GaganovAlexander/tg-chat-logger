@@ -3,7 +3,7 @@ from os import getenv
 from dotenv import find_dotenv, load_dotenv
 
 
-load_dotenv(find_dotenv())
+load_dotenv(find_dotenv(), override=True)
 
 BOT_TOKEN = getenv("BOT_TOKEN")
 
