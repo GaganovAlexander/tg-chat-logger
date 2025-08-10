@@ -196,7 +196,7 @@ async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     chat_whitelist = filters.Chat(chat_id=list(ALLOWED_CHAT_IDS))
     app.add_handler(MessageHandler(chat_whitelist & filters.TEXT & (~filters.COMMAND), on_msg))
-    app.add_handler(CommandHandler("get_id", get_chat_id, filters=chat_whitelist))
+    app.add_handler(CommandHandler("get_id", get_chat_id))
     app.add_handler(CommandHandler("t", cmd_t, filters=chat_whitelist))
     app.add_handler(CommandHandler("b", cmd_b, filters=chat_whitelist))
     app.add_handler(MessageHandler(~chat_whitelist, blocked), group=99)
