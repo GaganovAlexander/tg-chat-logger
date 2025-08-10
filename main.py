@@ -155,9 +155,13 @@ async def cmd_b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.effective_chat.send_message(final[:4000], parse_mode=ParseMode.MARKDOWN)
 
 
+async def get_chat_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    return await update.effective_chat.send_message(f"`{update.effective_chat.id}`", parse_mode=ParseMode.MARKDOWN)
+
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), on_msg))
+    app.add_handler(CommandHandler("get_id", get_chat_id))
     app.add_handler(CommandHandler("t", cmd_t))
     app.add_handler(CommandHandler("b", cmd_b))
     task = asyncio.create_task(summarizer_loop())
