@@ -6,12 +6,12 @@ import httpx
 
 from .schemas import Msg
 from .configs import (
-    LLM_PROVIDER,
+    LLM_PROVIDER, PROXY,
     GROQ_API_KEY, GROQ_BASEURL, GROQ_MODEL,
     OPENAI_API_KEY, OPENAI_BASEURL, OPENAI_MODEL
 )
 from .db.logger import (
-    log_llm_chat_start, log_llm_chat_end, log_llm_tool_request, log_llm_tool_result, log_exception
+    log_llm_chat_start, log_llm_chat_end, log_exception
 )
 
 
@@ -34,7 +34,7 @@ async def _chat_complete(messages: list, temperature: float = 0.2) -> Tuple[str,
     req_meta = log_llm_chat_start(provider, model, messages, temperature)
     t0 = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, proxy=PROXY or None) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()

@@ -10,6 +10,7 @@ BOT_TOKEN = getenv("BOT_TOKEN")
 N = int(getenv("N", "100"))
 K = int(getenv("K", "10"))
 
+PROXY = getenv("OUTBOUND_PROXY", "")
 
 LLM_PROVIDER = getenv("LLM_PROVIDER", "groq").lower()
 
