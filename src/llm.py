@@ -1,5 +1,7 @@
-import httpx
 from typing import List, Tuple
+import json
+
+import httpx
 
 from .schemas import Msg
 from .configs import (
@@ -55,17 +57,14 @@ async def _chat_complete(messages: list, temperature: float = 0.2) -> Tuple[str,
     return text, tin, tout
 
 
-async def summarize_messages(msgs: List[Msg]) -> Tuple[str, int, int]:
-    lines = []
-    for m in msgs:
-        lines.append(f"{m.ts.isoformat()}Z | {m.user_id}: {m.text}")
+async def summarize_messages(msgs: List[Msg]) -> tuple[str,int,int]:
+    lines = [f"{m.ts.isoformat()}Z | {m.author}: {m.text}" for m in msgs]
     content = (
         "Ты — ассистент, который делает краткие выжимки переписок Telegram.\n"
         "Сожми сообщения ниже в 5–10 пунктов: ключевые факты, решения, договорённости, вопросы, ссылки.\n"
         "Опусти оффтоп/шутки. Будь конкретным и кратким.\n\n"
         + "\n".join(lines)
     )
-
     messages = [
         {"role": "system", "content": "Ты делаешь точные и лаконичные саммари чатов."},
         {"role": "user", "content": content},
@@ -87,3 +86,26 @@ async def summarize_summaries(sums: List[str]) -> Tuple[str, int, int]:
         {"role": "user", "content": content},
     ]
     return await _chat_complete(messages, temperature=0.2)
+
+
+RAG_SYSTEM = (
+    "Ты — помощник с доступом к базе чата. "
+    "Если тебе нужны данные, верни ЕДИНСТВЕННЫЙ блок в формате:\n"
+    "TOOL: {\"name\":\"fetch_messages_like\",\"args\":{\"query\":\"...\",\"limit\":50,\"days\":30}}\n"
+    "или\n"
+    "TOOL: {\"name\":\"fetch_recent_summaries\",\"args\":{\"limit\":10}}\n"
+    "или\n"
+    "TOOL: {\"name\":\"fetch_recent_contexts\",\"args\":{\"limit\":5}}\n"
+    "Если данных достаточно — сразу дай ответ без TOOL."
+)
+
+def parse_tool_call(text: str) -> dict | None:
+    marker = "TOOL:"
+    idx = text.find(marker)
+    if idx == -1:
+        return None
+    js = text[idx+len(marker):].strip()
+    try:
+        return json.loads(js)
+    except Exception:
+        return None

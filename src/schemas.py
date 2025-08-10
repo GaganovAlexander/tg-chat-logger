@@ -7,4 +7,4 @@ class Msg(BaseModel):
     user_id: int
     text: str
     ts: dt.datetime
-    
+    author: str | None = None

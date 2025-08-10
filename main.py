@@ -1,13 +1,38 @@
 import asyncio
 import datetime as dt
+import json
+from math import ceil
 
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    CommandHandler,
+    filters,
+    ContextTypes
+)
+from telegram.constants import ParseMode
 
 from src.schemas import Msg
-from src.db import upsert_user, insert_message
+from src.db import (
+    upsert_user,
+    insert_message,
+    fetch_last_messages,
+    fetch_last_summaries,
+    fetch_last_contexts,
+    tool_fetch_messages_like,
+    tool_fetch_recent_summaries,
+    tool_fetch_recent_contexts
+)
+from src.llm import (
+    summarize_messages,
+    summarize_summaries,
+    RAG_SYSTEM,
+    _chat_complete,
+    parse_tool_call
+)
 from src.workers import summarizer_loop
-from src.configs import BOT_TOKEN
+from src.configs import BOT_TOKEN, N, K
 
 
 async def on_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -28,10 +53,111 @@ async def on_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ts=m.date.astimezone(dt.timezone.utc).replace(tzinfo=None)
     ))
 
+async def cmd_t(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    try:
+        n = int((ctx.args or ["0"])[0])
+    except Exception:
+        await update.effective_chat.send_message("Формат: /t {n}")
+        return
+
+    if n <= 0:
+        await update.effective_chat.send_message("n должно быть > 0, например \"/t 100\"")
+        return
+
+    if n <= N:
+        msgs = fetch_last_messages(n)
+        if not msgs:
+            await update.effective_chat.send_message("Сообщений пока нет.")
+            return
+        text, _, _ = await summarize_messages(msgs)
+        await update.effective_chat.send_message(text[:4000], ParseMode.MARKDOWN)
+        return
+
+    s_needed = ceil(n / N)
+    if s_needed < K:
+        sums = fetch_last_summaries(s_needed)
+        if sums:
+            text, _, _ = await summarize_summaries(sums)
+            await update.effective_chat.send_message(text[:4000])
+            return
+        msgs = fetch_last_messages(min(n, N))
+        if msgs:
+            text, _, _ = await summarize_messages(msgs)
+            await update.effective_chat.send_message(text[:4000], ParseMode.MARKDOWN)
+        else:
+            await update.effective_chat.send_message("Недостаточно данных.")
+        return
+
+    ctx_cnt = ceil(s_needed / K)
+    ctx_texts = fetch_last_contexts(ctx_cnt)
+    if ctx_texts:
+        text, _, _ = await summarize_summaries(ctx_texts)
+        await update.effective_chat.send_message(text[:4000], ParseMode.MARKDOWN)
+        return
+
+    sums = fetch_last_summaries(min(s_needed, K-1))
+    if sums:
+        text, _, _ = await summarize_summaries(sums)
+        await update.effective_chat.send_message(text[:4000], ParseMode.MARKDOWN)
+        return
+
+    msgs = fetch_last_messages(min(n, N))
+    if msgs:
+        text, _, _ = await summarize_messages(msgs)
+        await update.effective_chat.send_message(text[:4000], ParseMode.MARKDOWN)
+    else:
+        await update.effective_chat.send_message("Недостаточно данных.")
+
+
+async def cmd_b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.effective_chat.send_message("Формат: /b {запрос}")
+        return
+
+    first = [
+        {"role": "system", "content": RAG_SYSTEM},
+        {"role": "user", "content": q}
+    ]
+    draft, _, _ = await _chat_complete(first, temperature=0.2)
+
+    tool = parse_tool_call(draft)
+    if not tool:
+        await update.effective_chat.send_message(draft[:4000], ParseMode.MARKDOWN)
+        return
+
+    name = tool.get("name")
+    args = tool.get("args", {})
+
+    if name == "fetch_messages_like":
+        data = tool_fetch_messages_like(
+            query=args.get("query",""),
+            limit=int(args.get("limit", 50)),
+            days=int(args.get("days", 30))
+        )
+    elif name == "fetch_recent_summaries":
+        data = tool_fetch_recent_summaries(limit=int(args.get("limit", 10)))
+    elif name == "fetch_recent_contexts":
+        data = tool_fetch_recent_contexts(limit=int(args.get("limit", 5)))
+    else:
+        await update.effective_chat.send_message("Неизвестный инструмент.")
+        return
+
+    second = [
+        {"role": "system", "content": "Сформируй краткий и точный ответ по данным ниже."},
+        {"role": "user", "content": q},
+        {"role": "assistant", "content": draft},
+        {"role": "user", "content": "Данные из БД:\n" + json.dumps(data, ensure_ascii=False)[:12000]}
+    ]
+    final, _, _ = await _chat_complete(second, temperature=0.2)
+    await update.effective_chat.send_message(final[:4000], parse_mode=ParseMode.MARKDOWN)
+
 
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), on_msg))
+    app.add_handler(CommandHandler("t", cmd_t))
+    app.add_handler(CommandHandler("b", cmd_b))
     task = asyncio.create_task(summarizer_loop())
     await app.initialize()
     await app.start()
