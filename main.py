@@ -23,7 +23,7 @@ from src.db.messages import (
 from src.db.summaries import fetch_last_summaries, tool_fetch_recent_summaries
 from src.db.contexts import fetch_last_contexts, tool_fetch_recent_contexts
 from src.db.logger import (
-    log_llm_tool_request
+    log_llm_tool_request, log_event
 )
 from src.llm import (
     summarize_messages,
@@ -33,7 +33,7 @@ from src.llm import (
     parse_tool_call
 )
 from src.workers import summarizer_loop
-from src.configs import BOT_TOKEN, N, K
+from src.configs import BOT_TOKEN, ALLOWED_CHAT_IDS, N, K
 
 
 async def on_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -158,12 +158,48 @@ async def cmd_b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def get_chat_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return await update.effective_chat.send_message(f"`{update.effective_chat.id}`", parse_mode=ParseMode.MARKDOWN)
 
+
+async def blocked(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+
+    log_event({
+        "type": "security.blocked_chat",
+        "chat_id": getattr(chat, "id", None),
+        "chat_type": getattr(chat, "type", None),
+        "chat_title": getattr(chat, "title", None),
+        "user_id": getattr(user, "id", None),
+        "username": getattr(user, "username", None),
+        "reason": "not in whitelist",
+    })
+
+    cid = getattr(chat, "id", None)
+    if cid is None:
+        return
+
+    msg = (
+        "⚠️ Этот бот привязан к приватным чатам, разрешённым владельцем.\n"
+        "Его нельзя использовать здесь. Если вы администратор чата(или это частные сообщения), удалите бота "
+        "или попросите владельца добавить этот чат в whitelist.\n"
+        "Если вы не знаете владельца, то и сам бот для вас бесполезен."
+    )
+    try:
+        if update.effective_message:
+            await update.effective_message.reply_text(msg)
+        else:
+            await ctx.bot.send_message(chat_id=cid, text=msg)
+    except Exception:
+        pass
+
+
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), on_msg))
-    app.add_handler(CommandHandler("get_id", get_chat_id))
-    app.add_handler(CommandHandler("t", cmd_t))
-    app.add_handler(CommandHandler("b", cmd_b))
+    chat_whitelist = filters.Chat(chat_id=list(ALLOWED_CHAT_IDS))
+    app.add_handler(MessageHandler(chat_whitelist & filters.TEXT & (~filters.COMMAND), on_msg))
+    app.add_handler(CommandHandler("get_id", get_chat_id, filters=chat_whitelist))
+    app.add_handler(CommandHandler("t", cmd_t, filters=chat_whitelist))
+    app.add_handler(CommandHandler("b", cmd_b, filters=chat_whitelist))
+    app.add_handler(MessageHandler(~chat_whitelist, blocked), group=99)
     task = asyncio.create_task(summarizer_loop())
     await app.initialize()
     await app.start()

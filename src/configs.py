@@ -25,3 +25,20 @@ OPENAI_BASEURL = getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 CLICKHOUSE_DB = getenv("CLICKHOUSE_DB", "default")
 CLICKHOUSE_USER = getenv("CLICKHOUSE_USER","default")
 CLICKHOUSE_PASSWORD = getenv("CLICKHOUSE_PASSWORD","")
+
+
+def _parse_ids(val: str) -> set[int]:
+    if not val:
+        return set()
+    out = set()
+    for part in val.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.add(int(part))
+    return out
+
+ALLOWED_CHAT_IDS = _parse_ids(getenv("ALLOWED_CHAT_IDS", ""))
+single = getenv("ALLOWED_CHAT_ID")
+if single:
+    ALLOWED_CHAT_IDS.add(int(single))
