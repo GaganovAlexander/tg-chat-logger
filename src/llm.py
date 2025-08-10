@@ -1,0 +1,89 @@
+import httpx
+from typing import List, Tuple
+
+from .schemas import Msg
+from .configs import (
+    LLM_PROVIDER,
+    GROQ_API_KEY, GROQ_BASEURL, GROQ_MODEL,
+    OPENAI_API_KEY, OPENAI_BASEURL, OPENAI_MODEL
+)
+
+
+async def _chat_complete(messages: list, temperature: float = 0.2) -> Tuple[str, int, int]:
+    """
+    Возвращает (text, prompt_tokens, completion_tokens),
+    прозрачно маршрутизируя на Groq или OpenAI.
+    """
+    if LLM_PROVIDER == "groq":
+        if not GROQ_API_KEY:
+            raise RuntimeError("Не задан GROQ_API_KEY")
+        url = f"{GROQ_BASEURL}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+        }
+    elif LLM_PROVIDER == "openai":
+        if not OPENAI_API_KEY:
+            raise RuntimeError("Не задан OPENAI_API_KEY")
+        url = f"{OPENAI_BASEURL}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": OPENAI_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+        }
+    else:
+        raise RuntimeError(f"Неизвестный LLM_PROVIDER: {LLM_PROVIDER}")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        r.raise_for_status()
+        data = r.json()
+
+    text = data["choices"][0]["message"]["content"].strip()
+    usage = data.get("usage") or {}
+    tin  = int(usage.get("prompt_tokens") or 0)
+    tout = int(usage.get("completion_tokens") or 0)
+    return text, tin, tout
+
+
+async def summarize_messages(msgs: List[Msg]) -> Tuple[str, int, int]:
+    lines = []
+    for m in msgs:
+        lines.append(f"{m.ts.isoformat()}Z | {m.user_id}: {m.text}")
+    content = (
+        "Ты — ассистент, который делает краткие выжимки переписок Telegram.\n"
+        "Сожми сообщения ниже в 5–10 пунктов: ключевые факты, решения, договорённости, вопросы, ссылки.\n"
+        "Опусти оффтоп/шутки. Будь конкретным и кратким.\n\n"
+        + "\n".join(lines)
+    )
+
+    messages = [
+        {"role": "system", "content": "Ты делаешь точные и лаконичные саммари чатов."},
+        {"role": "user", "content": content},
+    ]
+    return await _chat_complete(messages, temperature=0.2)
+
+
+async def summarize_summaries(sums: List[str]) -> Tuple[str, int, int]:
+    joined = "\n\n".join(f"- Выжимка {i}:\n{s}" for i, s in enumerate(sums, 1))
+    content = (
+        "Сверни ряд выжимок в общий контекст (10–15 коротких пунктов):\n"
+        "• темы и решения по порядку времени,\n"
+        "• важные изменения и договорённости,\n"
+        "• открытые вопросы/TODO.\n\n"
+        + joined
+    )
+    messages = [
+        {"role": "system", "content": "Ты агрегируешь выжимки в компактную хронику."},
+        {"role": "user", "content": content},
+    ]
+    return await _chat_complete(messages, temperature=0.2)
