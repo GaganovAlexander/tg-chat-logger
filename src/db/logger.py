@@ -29,7 +29,7 @@ def log_event(meta: Dict[str, Any]) -> None:
         payload = _safe_json(meta)
         ch.insert(
             _TABLE,
-            [(dt.datetime.utcnow(), payload)],
+            [(dt.datetime.now(dt.timezone.utc), payload)],
             column_names=["event_time", "meta_raw"]
         )
     except Exception:
