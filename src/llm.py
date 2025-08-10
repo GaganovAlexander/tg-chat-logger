@@ -1,5 +1,6 @@
 from typing import List, Tuple
 import json
+import time
 
 import httpx
 
@@ -9,52 +10,49 @@ from .configs import (
     GROQ_API_KEY, GROQ_BASEURL, GROQ_MODEL,
     OPENAI_API_KEY, OPENAI_BASEURL, OPENAI_MODEL
 )
+from .db.logger import (
+    log_llm_chat_start, log_llm_chat_end, log_llm_tool_request, log_llm_tool_result, log_exception
+)
 
 
 async def _chat_complete(messages: list, temperature: float = 0.2) -> Tuple[str, int, int]:
-    """
-    Возвращает (text, prompt_tokens, completion_tokens),
-    прозрачно маршрутизируя на Groq или OpenAI.
-    """
     if LLM_PROVIDER == "groq":
-        if not GROQ_API_KEY:
-            raise RuntimeError("Не задан GROQ_API_KEY")
         url = f"{GROQ_BASEURL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": GROQ_MODEL,
-            "messages": messages,
-            "temperature": temperature,
-        }
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        model = GROQ_MODEL
+        provider = "groq"
     elif LLM_PROVIDER == "openai":
-        if not OPENAI_API_KEY:
-            raise RuntimeError("Не задан OPENAI_API_KEY")
         url = f"{OPENAI_BASEURL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": OPENAI_MODEL,
-            "messages": messages,
-            "temperature": temperature,
-        }
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        model = OPENAI_MODEL
+        provider = "openai"
     else:
         raise RuntimeError(f"Неизвестный LLM_PROVIDER: {LLM_PROVIDER}")
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
+    payload = {"model": model, "messages": messages, "temperature": temperature}
 
-    text = data["choices"][0]["message"]["content"].strip()
-    usage = data.get("usage") or {}
-    tin  = int(usage.get("prompt_tokens") or 0)
-    tout = int(usage.get("completion_tokens") or 0)
-    return text, tin, tout
+    req_meta = log_llm_chat_start(provider, model, messages, temperature)
+    t0 = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, headers=headers, json=payload)
+            r.raise_for_status()
+            data = r.json()
+
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+        usage = data.get("usage") or {}
+        tin  = int(usage.get("prompt_tokens") or 0)
+        tout = int(usage.get("completion_tokens") or 0)
+        dt_ms = int((time.perf_counter() - t0) * 1000)
+
+        log_llm_chat_end(provider, model, req_meta, text, usage, latency_ms=dt_ms, ok=True)
+        return text, tin, tout
+
+    except Exception:
+        dt_ms = int((time.perf_counter() - t0) * 1000)
+        log_llm_chat_end(provider, model, req_meta, response_text="", usage=None, latency_ms=dt_ms, ok=False, error="HTTP/Parse error")
+        log_exception(ctx=f"_chat_complete provider={provider} model={model}")
+        raise
 
 
 async def summarize_messages(msgs: List[Msg]) -> tuple[str,int,int]:

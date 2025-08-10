@@ -3,3 +3,4 @@ venv/
 __pycache__/
 ch_data/
 ch_logs/
+.DS_Store

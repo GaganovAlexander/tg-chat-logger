@@ -6,7 +6,7 @@ from .db import (
     insert_summary,
     get_last_context_batch_id,
     insert_context,
-    ch
+    get_ch
 )
 from .llm import summarize_messages, summarize_summaries
 from .configs import N, K
@@ -27,7 +27,7 @@ async def summarizer_loop():
 
 async def maybe_make_context():
     last_ctx_to = get_last_context_batch_id()
-    rows = ch.query(
+    rows = get_ch().query(
         "SELECT batch_id, text, from_ts, to_ts "
         "FROM tg_summaries WHERE batch_id > %(b)s ORDER BY batch_id ASC LIMIT %(k)s",
         parameters={'b': last_ctx_to, 'k': K}

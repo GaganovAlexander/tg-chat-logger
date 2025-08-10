@@ -14,15 +14,16 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from src.schemas import Msg
-from src.db import (
-    upsert_user,
+from src.db.users import upsert_user
+from src.db.messages import (
     insert_message,
     fetch_last_messages,
-    fetch_last_summaries,
-    fetch_last_contexts,
-    tool_fetch_messages_like,
-    tool_fetch_recent_summaries,
-    tool_fetch_recent_contexts
+    tool_fetch_messages_like
+)
+from src.db.summaries import fetch_last_summaries, tool_fetch_recent_summaries
+from src.db.contexts import fetch_last_contexts, tool_fetch_recent_contexts
+from src.db.logger import (
+    log_llm_tool_request
 )
 from src.llm import (
     summarize_messages,
@@ -125,6 +126,7 @@ async def cmd_b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not tool:
         await update.effective_chat.send_message(draft[:4000], ParseMode.MARKDOWN)
         return
+    log_llm_tool_request(draft, tool)
 
     name = tool.get("name")
     args = tool.get("args", {})
