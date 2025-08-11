@@ -10,18 +10,22 @@ from .users import load_display_names
 
 def get_oldest_ts_of_last_n(n: int) -> Optional[datetime]:
     ch = get_ch()
+    row = ch.query("SELECT max(tg_msg_id) FROM tg_messages").result_rows
+    last_id = int(row[0][0] or 0)
+    if last_id == 0 or n <= 0:
+        return
+
+    from_id = max(0, last_id - n)
+
     rows = ch.query(
         """
-        SELECT min(ts)
-        FROM (
-          SELECT ts
-          FROM tg_messages
-          WHERE lengthUTF8(text) > 0
-          ORDER BY tg_msg_id DESC
-          LIMIT %(n)s
-        )
+        SELECT tg_msg_id, user_id, text, ts
+        FROM tg_messages
+        WHERE tg_msg_id > %(from_id)s
+          AND lengthUTF8(text) > 0
+        ORDER BY tg_msg_id ASC
         """,
-        parameters={"n": n}
+        parameters={"from_id": from_id},
     ).result_rows
     return rows[0][0] if rows and rows[0][0] is not None else None
 
@@ -56,15 +60,22 @@ def fetch_summaries_since(from_ts: datetime) -> List[Tuple[str, datetime]]:
 def fetch_raw_since(from_ts: datetime, limit: int) -> List[Msg]:
     """Хвост сырых сообщений после from_ts (лимитируем, чтобы не разбухать контекст)."""
     ch = get_ch()
+    row = ch.query("SELECT max(tg_msg_id) FROM tg_messages").result_rows
+    last_id = int(row[0][0] or 0)
+    if last_id == 0 or limit <= 0:
+        return []
+
+    from_id = max(0, last_id - limit)
+
     rows = ch.query(
         """
         SELECT tg_msg_id, user_id, text, ts
         FROM tg_messages
-        WHERE ts > %(from_ts)s AND lengthUTF8(text) > 0
+        WHERE tg_msg_id > %(from_id)s
+          AND lengthUTF8(text) > 0
         ORDER BY tg_msg_id ASC
-        LIMIT %(lim)s
         """,
-        parameters={"from_ts": from_ts, "lim": limit}
+        parameters={"from_id": from_id},
     ).result_rows
     msgs = [Msg(tg_msg_id=r[0], user_id=r[1], text=r[2], ts=r[3]) for r in rows]
     names = load_display_names(m.user_id for m in msgs)

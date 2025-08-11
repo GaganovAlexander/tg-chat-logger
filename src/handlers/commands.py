@@ -7,9 +7,9 @@ from telegram.constants import ParseMode
 from src.schemas import Msg
 from src.db import get_ch
 from src.db.logger import log_event, log_llm_tool_request
-from src.db.messages import tool_fetch_messages_like
-from src.db.summaries import tool_fetch_recent_summaries
-from src.db.contexts import tool_fetch_recent_contexts
+from src.db.messages import tool_get_messages_window, tool_search_messages
+from src.db.summaries import tool_get_summaries
+from src.db.contexts import tool_get_contexts
 from src.db.users import load_display_names
 from src.t_materials import build_materials_for_last_n
 from src.llm import RAG_SYSTEM, _chat_complete, parse_tool_call
@@ -88,14 +88,22 @@ async def cmd_t(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         blocks.append("Последние сообщения (хвост):\n" + tail_lines)
 
     content = (
-        "Сверни материалы ниже в краткую хронологию ключевых фактов, решений и вопросов. "
-        "Отдавай приоритет контекстам, затем выжимкам; хвост сырых используй только если там есть новая значимая информация. "
-        "Структура — 8–15 буллетов, без воды.\n\n" + "\n\n---\n\n".join(blocks)
+        "Составь ЕДИНУЮ хронологию ключевых событий и фактов из всех материалов ниже.\n"
+        "Используй только важную информацию, без лишних деталей и повторов.\n"
+        "Объедини данные из контекстов, выжимок и хвоста, сортируя их строго по времени.\n"
+        "Приоритет источников: контексты > выжимки > хвост.\n"
+        "Игнорируй факты, которые уже упоминались ранее.\n"
+        "Вывод — в формате 8–15 буллетов, без лишнего оформления и лишних заголовков.\n"
+        "Не используй спецсимволов или markdown разметку.\n\n"
+        "Материалы:\n" + "\n\n---\n\n".join(blocks)
     )
 
     messages = [
-        {"role": "system", "content": "Ты делаешь краткие, точные выжимки чатов."},
-        {"role": "user", "content": content},
+        {
+            "role": "system",
+            "content": "Ты опытный аналитик, который делает сжатые хронологические выжимки диалогов."
+        },
+        {"role": "user", "content": content}
     ]
     text, _, _ = await _chat_complete(messages, temperature=0.2)
 
@@ -134,7 +142,7 @@ async def cmd_b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     tool = parse_tool_call(draft)
     if not tool:
-        await update.effective_chat.send_message(draft[:4000], ParseMode.MARKDOWN)
+        await update.effective_chat.send_message(draft[:4000])
         return
 
     log_llm_tool_request(draft, tool)
@@ -142,28 +150,34 @@ async def cmd_b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = tool.get("name")
     args = tool.get("args", {}) or {}
 
-    if name == "fetch_messages_like":
-        data = tool_fetch_messages_like(
+    if name == "get_contexts":
+        data = tool_get_contexts(limit=int(args.get("limit", 5)))
+    elif name == "get_summaries":
+        data = tool_get_summaries(limit=int(args.get("limit", 10)))
+    elif name == "get_messages_window":
+        data = tool_get_messages_window(n=int(args.get("n", 200)))
+    elif name == "search_messages":
+        data = tool_search_messages(
             query=args.get("query", ""),
+            window=int(args.get("window", 5000)),
             limit=int(args.get("limit", 50)),
-            days=int(args.get("days", 30)),
         )
-    elif name == "fetch_recent_summaries":
-        data = tool_fetch_recent_summaries(limit=int(args.get("limit", 10)))
-    elif name == "fetch_recent_contexts":
-        data = tool_fetch_recent_contexts(limit=int(args.get("limit", 5)))
     else:
-        await update.effective_chat.send_message("Неизвестный инструмент.")
+        await update.effective_chat.send_message("Нейросеть попыталась использовать неизвестный инструмент.")
         return
 
     second = [
-        {"role": "system", "content": "Сформируй краткий и точный ответ по данным ниже."},
+        {"role": "system", "content": (
+            "Отвечай кратко и конкретно. "
+            "Если пришли и контексты/выжимки и сырые сообщения, доверяй контекстам и выжимкам, "
+            "а сырые используй только для уточнения/цитаты."
+        )},
         {"role": "user", "content": q},
         {"role": "assistant", "content": draft},
         {"role": "user", "content": "Данные из БД:\n" + json.dumps(data, ensure_ascii=False)[:12000]},
     ]
     final, _, _ = await _chat_complete(second, temperature=0.2)
-    await update.effective_chat.send_message(final[:4000], parse_mode=ParseMode.MARKDOWN)
+    await update.effective_chat.send_message(final[:4000])
 
 
 async def get_chat_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

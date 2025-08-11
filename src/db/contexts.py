@@ -4,6 +4,7 @@ from typing import List, Tuple
 import datetime as dt
 
 from . import get_ch
+from ..configs import N
 
 
 def get_last_context_batch_id() -> int:
@@ -52,15 +53,27 @@ def fetch_last_contexts(c: int) -> list[str]:
     ).result_rows
     return [r[0] for r in rows[::-1]]
 
-def tool_fetch_recent_contexts(limit: int = 5) -> list[dict]:
+
+def tool_get_contexts(limit: int = 5) -> list[dict]:
     ch = get_ch()
     rows = ch.query(
         """
-        SELECT context_id, from_ts, to_ts, text
+        SELECT context_id, from_batch_id, to_batch_id, from_ts, to_ts, text
         FROM tg_contexts
         ORDER BY context_id DESC
         LIMIT %(lim)s
         """,
         parameters={"lim": limit}
     ).result_rows
-    return [{"context_id": r[0], "from_ts": r[1].isoformat()+"Z", "to_ts": r[2].isoformat()+"Z", "text": r[3]} for r in rows]
+    rows.reverse()
+    out = []
+    for ctx_id, from_b, to_b, from_ts, to_ts, text in rows:
+        approx = max(1, (to_b - from_b + 1)) * N
+        out.append({
+            "context_id": ctx_id,
+            "from_ts": from_ts.isoformat() + "Z",
+            "to_ts": to_ts.isoformat() + "Z",
+            "approx_messages": approx,
+            "text": text
+        })
+    return out

@@ -5,6 +5,7 @@ from typing import List
 from . import get_ch
 from ..schemas import Msg
 from .users import load_display_names
+from ..configs import N
 
 
 def get_last_summarized_msg_id() -> int:
@@ -67,15 +68,25 @@ def fetch_last_summaries(k: int) -> list[str]:
     ).result_rows
     return [r[0] for r in rows[::-1]]
 
-def tool_fetch_recent_summaries(limit: int = 5) -> list[dict]:
+def tool_get_summaries(limit: int = 10) -> list[dict]:
     ch = get_ch()
     rows = ch.query(
         """
-        SELECT context_id, from_ts, to_ts, text
+        SELECT batch_id, from_ts, to_ts, text
         FROM tg_summaries
         ORDER BY batch_id DESC
         LIMIT %(lim)s
         """,
         parameters={"lim": limit}
     ).result_rows
-    return [{"summary_id": r[0], "from_ts": r[1].isoformat()+"Z", "to_ts": r[2].isoformat()+"Z", "text": r[3]} for r in rows]
+    rows.reverse()
+    return [
+        {
+            "batch_id": r[0],
+            "from_ts": r[1].isoformat() + "Z",
+            "to_ts": r[2].isoformat() + "Z",
+            "approx_messages": N,
+            "text": r[3],
+        }
+        for r in rows
+    ]

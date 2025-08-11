@@ -8,7 +8,8 @@ from .schemas import Msg
 from .configs import (
     LLM_PROVIDER, PROXY,
     GROQ_API_KEY, GROQ_BASEURL, GROQ_MODEL,
-    OPENAI_API_KEY, OPENAI_BASEURL, OPENAI_MODEL
+    OPENAI_API_KEY, OPENAI_BASEURL, OPENAI_MODEL,
+    N, K
 )
 from .db.logger import (
     log_llm_chat_start, log_llm_chat_end, log_exception
@@ -34,7 +35,7 @@ async def _chat_complete(messages: list, temperature: float = 0.2) -> Tuple[str,
     req_meta = log_llm_chat_start(provider, model, messages, temperature)
     t0 = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=60, proxy=PROXY or None) as client:
+        async with httpx.AsyncClient(timeout=300, proxy=PROXY or None) as client:
             r = await client.post(url, headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
@@ -87,16 +88,26 @@ async def summarize_summaries(sums: List[str]) -> Tuple[str, int, int]:
 
 
 RAG_SYSTEM = (
-    "Ты — помощник с доступом к базе чата. "
-    "Если тебе нужны данные, верни ЕДИНСТВЕННЫЙ блок в формате:\n"
-    "TOOL: {\"name\":\"fetch_messages_like\",\"args\":{\"query\":\"...\",\"limit\":50,\"days\":30}}\n"
-    "или\n"
-    "TOOL: {\"name\":\"fetch_recent_summaries\",\"args\":{\"limit\":10}}\n"
-    "или\n"
-    "TOOL: {\"name\":\"fetch_recent_contexts\",\"args\":{\"limit\":5}}\n"
-    "Если данных достаточно — сразу дай ответ без TOOL."
+    "Ты — помощник с доступом к базе чата. У тебя есть РОВНО ОДИН вызов инструмента (или ни одного).\n"
+    "Верни ЕДИНСТВЕННЫЙ блок: TOOL: {\"name\":\"<tool>\",\"args\":{...}} — либо финальный ответ без TOOL.\n\n"
+    f"Размеры сжатия (важно для выбора инструмента):\n"
+    f"• ОДИН контекст покрывает примерно {N*K} сообщений (≈ K выжимок по {N} сообщений каждая).\n"
+    f"• ОДНА выжимка покрывает примерно {N} сообщений.\n"
+    "• Окно сырых сообщений — точные последние сообщения без сжатия.\n\n"
+    "Выбирай инструмент по правилам:\n"
+    "1) get_contexts {\"limit\":5}\n"
+    "   • Нужен крупный обзор или общий смысл за длительный период.\n"
+    f"   • Каждый элемент ≈ {N*K} сообщений. Хорош для не-свежих тем.\n"
+    "2) get_summaries {\"limit\":10}\n"
+    f"   • Нужны недавние обсуждения кратко (каждая выжимка ≈ {N}).\n"
+    "   • Баланс: компактно, но детальнее, чем контексты.\n"
+    "3) get_messages_window {\"n\":200}\n"
+    "   • Нужны свежие детали/цитаты из последних сообщений. Бери n 100–300.\n"
+    "4) search_messages {\"query\":\"...\",\"window\":5000,\"limit\":50}\n"
+    "   • Поиск конкретной темы/имени в недавних сообщениях (окно по msg_id).\n"
+    "   • При вопросах про конкретного человека/объект сначала пробуй это.\n\n"
+    "Если вопрос можно ответить без данных — отвечай сразу, без TOOL."
 )
-
 def parse_tool_call(text: str) -> dict | None:
     marker = "TOOL:"
     idx = text.find(marker)

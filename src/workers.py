@@ -1,13 +1,8 @@
 import asyncio
 
-from .db import (
-    get_last_summarized_msg_id,
-    get_next_batch,
-    insert_summary,
-    get_last_context_batch_id,
-    insert_context,
-    get_ch
-)
+from .db import get_ch
+from .db.summaries import get_last_summarized_msg_id, insert_summary, get_next_batch
+from .db.contexts import get_last_context_batch_id, insert_context
 from .llm import summarize_messages, summarize_summaries
 from .configs import N, K
 
